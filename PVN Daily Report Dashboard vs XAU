@@ -1,0 +1,388 @@
+//@version=6
+indicator("PVN Daily Report Dashboard vs XAU", shorttitle="PVN Report vs XAU", overlay=false, max_lines_count=500, max_labels_count=500)
+
+//==================== INPUTS ====================
+groupTrack = "Tracking"
+startTime = input.time(timestamp("2026-02-28 00:00 +0700"), "Ngay theo doi", group=groupTrack)
+
+groupSymbols = "Symbols"
+symGAS = input.symbol("HOSE:GAS", "GAS", group=groupSymbols)
+symPVD = input.symbol("HOSE:PVD", "PVD", group=groupSymbols)
+symPVS = input.symbol("HNX:PVS",  "PVS", group=groupSymbols)
+symBSR = input.symbol("HOSE:BSR", "BSR", group=groupSymbols)
+symPLX = input.symbol("HOSE:PLX", "PLX", group=groupSymbols)
+symOIL = input.symbol("UPCOM:OIL","OIL", group=groupSymbols)
+
+groupBench = "Benchmarks"
+symXAU   = input.symbol("OANDA:XAUUSD", "XAU Symbol", group=groupBench)
+symWTI   = input.symbol("TVC:USOIL", "WTI Symbol", group=groupBench)
+symBrent = input.symbol("TVC:UKOIL", "Brent Symbol", group=groupBench)
+
+groupDisplay = "Display"
+showTable = input.bool(true, "Hien thi bang", group=groupDisplay)
+tablePosInput = input.string("Top Right", "Vi tri bang", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group=groupDisplay)
+showAvgLine = input.bool(true, "Ve them duong trung binh nhom", group=groupDisplay)
+showLabels = input.bool(true, "Hien nhan ten duong", group=groupDisplay)
+lineWidth = input.int(2, "Do day duong", minval=1, maxval=4, group=groupDisplay)
+
+//==================== HELPERS ====================
+f_pos(_p) =>
+    _p == "Top Left" ? position.top_left :
+     _p == "Bottom Right" ? position.bottom_right :
+     _p == "Bottom Left" ? position.bottom_left :
+     position.top_right
+
+f_fmt_pct(v) =>
+    na(v) ? "na" : str.format("{0,number,#0.00}%", v)
+
+f_bg(v) =>
+    na(v) ? color.new(color.gray, 85) :
+     v > 0 ? color.new(color.green, 82) :
+     v < 0 ? color.new(color.red, 82) :
+     color.new(color.yellow, 82)
+
+f_bg_header() =>
+    color.rgb(45, 45, 55)
+
+f_bg_group() =>
+    color.rgb(35, 55, 75)
+
+f_bg_bench() =>
+    color.rgb(60, 55, 35)
+
+f_start_close(sym, _startTime) =>
+    request.security(
+         sym,
+         timeframe.period,
+         ta.valuewhen(time >= _startTime and time[1] < _startTime, close, 0),
+         gaps=barmerge.gaps_off,
+         lookahead=barmerge.lookahead_off)
+
+f_last_close(sym) =>
+    request.security(sym, timeframe.period, close, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+
+f_return_pct(cur, start) =>
+    not na(cur) and not na(start) and start != 0 ? (cur / start - 1.0) * 100.0 : na
+
+f_avg2(a, b) =>
+    na(a) and na(b) ? na :
+     na(a) ? b :
+     na(b) ? a :
+     (a + b) / 2.0
+
+f_avg4(a, b, c, d) =>
+    float sum = (na(a) ? 0.0 : a) + (na(b) ? 0.0 : b) + (na(c) ? 0.0 : c) + (na(d) ? 0.0 : d)
+    int cnt = (na(a) ? 0 : 1) + (na(b) ? 0 : 1) + (na(c) ? 0 : 1) + (na(d) ? 0 : 1)
+    cnt == 0 ? na : sum / cnt
+
+f_avg6(a, b, c, d, e, f) =>
+    float sum = (na(a) ? 0.0 : a) + (na(b) ? 0.0 : b) + (na(c) ? 0.0 : c) + (na(d) ? 0.0 : d) + (na(e) ? 0.0 : e) + (na(f) ? 0.0 : f)
+    int cnt = (na(a) ? 0 : 1) + (na(b) ? 0 : 1) + (na(c) ? 0 : 1) + (na(d) ? 0 : 1) + (na(e) ? 0 : 1) + (na(f) ? 0 : 1)
+    cnt == 0 ? na : sum / cnt
+
+f_rank_txt(v) =>
+    na(v) ? "-" : str.tostring(int(v))
+
+f_rank_gas(gas, pvd, pvs, bsr, plx, oil) =>
+    na(gas) ? na :
+     1 +
+     (not na(pvd) and pvd > gas ? 1 : 0) +
+     (not na(pvs) and pvs > gas ? 1 : 0) +
+     (not na(bsr) and bsr > gas ? 1 : 0) +
+     (not na(plx) and plx > gas ? 1 : 0) +
+     (not na(oil) and oil > gas ? 1 : 0)
+
+f_rank_pvd(gas, pvd, pvs, bsr, plx, oil) =>
+    na(pvd) ? na :
+     1 +
+     (not na(gas) and gas > pvd ? 1 : 0) +
+     (not na(pvs) and pvs > pvd ? 1 : 0) +
+     (not na(bsr) and bsr > pvd ? 1 : 0) +
+     (not na(plx) and plx > pvd ? 1 : 0) +
+     (not na(oil) and oil > pvd ? 1 : 0)
+
+f_rank_pvs(gas, pvd, pvs, bsr, plx, oil) =>
+    na(pvs) ? na :
+     1 +
+     (not na(gas) and gas > pvs ? 1 : 0) +
+     (not na(pvd) and pvd > pvs ? 1 : 0) +
+     (not na(bsr) and bsr > pvs ? 1 : 0) +
+     (not na(plx) and plx > pvs ? 1 : 0) +
+     (not na(oil) and oil > pvs ? 1 : 0)
+
+f_rank_bsr(gas, pvd, pvs, bsr, plx, oil) =>
+    na(bsr) ? na :
+     1 +
+     (not na(gas) and gas > bsr ? 1 : 0) +
+     (not na(pvd) and pvd > bsr ? 1 : 0) +
+     (not na(pvs) and pvs > bsr ? 1 : 0) +
+     (not na(plx) and plx > bsr ? 1 : 0) +
+     (not na(oil) and oil > bsr ? 1 : 0)
+
+f_rank_plx(gas, pvd, pvs, bsr, plx, oil) =>
+    na(plx) ? na :
+     1 +
+     (not na(gas) and gas > plx ? 1 : 0) +
+     (not na(pvd) and pvd > plx ? 1 : 0) +
+     (not na(pvs) and pvs > plx ? 1 : 0) +
+     (not na(bsr) and bsr > plx ? 1 : 0) +
+     (not na(oil) and oil > plx ? 1 : 0)
+
+f_rank_oil(gas, pvd, pvs, bsr, plx, oil) =>
+    na(oil) ? na :
+     1 +
+     (not na(gas) and gas > oil ? 1 : 0) +
+     (not na(pvd) and pvd > oil ? 1 : 0) +
+     (not na(pvs) and pvs > oil ? 1 : 0) +
+     (not na(bsr) and bsr > oil ? 1 : 0) +
+     (not na(plx) and plx > oil ? 1 : 0)
+
+//==================== COLORS ====================
+colGAS = color.rgb(0, 170, 255)
+colPVD = color.rgb(255, 165, 0)
+colPVS = color.rgb(0, 200, 120)
+colBSR = color.rgb(170, 120, 255)
+colPLX = color.rgb(255, 80, 120)
+colOIL = color.rgb(255, 215, 0)
+colAVG = color.white
+
+//==================== DATA ====================
+gasStart   = f_start_close(symGAS, startTime)
+pvdStart   = f_start_close(symPVD, startTime)
+pvsStart   = f_start_close(symPVS, startTime)
+bsrStart   = f_start_close(symBSR, startTime)
+plxStart   = f_start_close(symPLX, startTime)
+oilStart   = f_start_close(symOIL, startTime)
+xauStart   = f_start_close(symXAU, startTime)
+wtiStart   = f_start_close(symWTI, startTime)
+brentStart = f_start_close(symBrent, startTime)
+
+gasNow   = f_last_close(symGAS)
+pvdNow   = f_last_close(symPVD)
+pvsNow   = f_last_close(symPVS)
+bsrNow   = f_last_close(symBSR)
+plxNow   = f_last_close(symPLX)
+oilNow   = f_last_close(symOIL)
+xauNow   = f_last_close(symXAU)
+wtiNow   = f_last_close(symWTI)
+brentNow = f_last_close(symBrent)
+
+//==================== RETURNS ====================
+xauRet   = f_return_pct(xauNow, xauStart)
+wtiRet   = f_return_pct(wtiNow, wtiStart)
+brentRet = f_return_pct(brentNow, brentStart)
+
+gasRet = f_return_pct(gasNow, gasStart)
+pvdRet = f_return_pct(pvdNow, pvdStart)
+pvsRet = f_return_pct(pvsNow, pvsStart)
+bsrRet = f_return_pct(bsrNow, bsrStart)
+plxRet = f_return_pct(plxNow, plxStart)
+oilRet = f_return_pct(oilNow, oilStart)
+
+// Duong: Ban XAU, mua co
+gasSwitch = gasRet - xauRet
+pvdSwitch = pvdRet - xauRet
+pvsSwitch = pvsRet - xauRet
+bsrSwitch = bsrRet - xauRet
+plxSwitch = plxRet - xauRet
+oilSwitch = oilRet - xauRet
+
+avgSwitch = f_avg6(gasSwitch, pvdSwitch, pvsSwitch, bsrSwitch, plxSwitch, oilSwitch)
+
+// Nhom
+pvnCoreAvgRet = f_avg4(gasRet, pvdRet, pvsRet, bsrRet)
+downstreamAvgRet = f_avg2(plxRet, oilRet)
+groupAvgRet = f_avg6(gasRet, pvdRet, pvsRet, bsrRet, plxRet, oilRet)
+
+pvnCoreKeepXAU = xauRet - pvnCoreAvgRet
+downstreamKeepXAU = xauRet - downstreamAvgRet
+groupKeepXAU = xauRet - groupAvgRet
+
+// Bang: Giu XAU, khong mua co
+gasKeepXAU = xauRet - gasRet
+pvdKeepXAU = xauRet - pvdRet
+pvsKeepXAU = xauRet - pvsRet
+bsrKeepXAU = xauRet - bsrRet
+plxKeepXAU = xauRet - plxRet
+oilKeepXAU = xauRet - oilRet
+
+// Rank
+gasRank = f_rank_gas(gasRet, pvdRet, pvsRet, bsrRet, plxRet, oilRet)
+pvdRank = f_rank_pvd(gasRet, pvdRet, pvsRet, bsrRet, plxRet, oilRet)
+pvsRank = f_rank_pvs(gasRet, pvdRet, pvsRet, bsrRet, plxRet, oilRet)
+bsrRank = f_rank_bsr(gasRet, pvdRet, pvsRet, bsrRet, plxRet, oilRet)
+plxRank = f_rank_plx(gasRet, pvdRet, pvsRet, bsrRet, plxRet, oilRet)
+oilRank = f_rank_oil(gasRet, pvdRet, pvsRet, bsrRet, plxRet, oilRet)
+
+// Best / Worst
+string bestName = na
+float bestRet = na
+if not na(gasRet)
+    bestName := "GAS"
+    bestRet := gasRet
+if not na(pvdRet) and (na(bestRet) or pvdRet > bestRet)
+    bestRet := pvdRet
+    bestName := "PVD"
+if not na(pvsRet) and (na(bestRet) or pvsRet > bestRet)
+    bestRet := pvsRet
+    bestName := "PVS"
+if not na(bsrRet) and (na(bestRet) or bsrRet > bestRet)
+    bestRet := bsrRet
+    bestName := "BSR"
+if not na(plxRet) and (na(bestRet) or plxRet > bestRet)
+    bestRet := plxRet
+    bestName := "PLX"
+if not na(oilRet) and (na(bestRet) or oilRet > bestRet)
+    bestRet := oilRet
+    bestName := "OIL"
+
+string worstName = na
+float worstRet = na
+if not na(gasRet)
+    worstName := "GAS"
+    worstRet := gasRet
+if not na(pvdRet) and (na(worstRet) or pvdRet < worstRet)
+    worstRet := pvdRet
+    worstName := "PVD"
+if not na(pvsRet) and (na(worstRet) or pvsRet < worstRet)
+    worstRet := pvsRet
+    worstName := "PVS"
+if not na(bsrRet) and (na(worstRet) or bsrRet < worstRet)
+    worstRet := bsrRet
+    worstName := "BSR"
+if not na(plxRet) and (na(worstRet) or plxRet < worstRet)
+    worstRet := plxRet
+    worstName := "PLX"
+if not na(oilRet) and (na(worstRet) or oilRet < worstRet)
+    worstRet := oilRet
+    worstName := "OIL"
+
+//==================== PLOTS ====================
+plot(gasSwitch, title="GAS | Ban XAU mua co", color=colGAS, linewidth=lineWidth)
+plot(pvdSwitch, title="PVD | Ban XAU mua co", color=colPVD, linewidth=lineWidth)
+plot(pvsSwitch, title="PVS | Ban XAU mua co", color=colPVS, linewidth=lineWidth)
+plot(bsrSwitch, title="BSR | Ban XAU mua co", color=colBSR, linewidth=lineWidth)
+plot(plxSwitch, title="PLX | Ban XAU mua co", color=colPLX, linewidth=lineWidth)
+plot(oilSwitch, title="OIL | Ban XAU mua co", color=colOIL, linewidth=lineWidth)
+plot(showAvgLine ? avgSwitch : na, title="Average group | Ban XAU mua co", color=colAVG, linewidth=3)
+
+hline(0, "Moc 0%", linestyle=hline.style_dashed, color=color.gray)
+
+//==================== RIGHT EDGE LABELS ====================
+var label gasLbl = na
+var label pvdLbl = na
+var label pvsLbl = na
+var label bsrLbl = na
+var label plxLbl = na
+var label oilLbl = na
+var label avgLbl = na
+
+if barstate.islast
+    if not na(gasLbl)
+        label.delete(gasLbl)
+    if not na(pvdLbl)
+        label.delete(pvdLbl)
+    if not na(pvsLbl)
+        label.delete(pvsLbl)
+    if not na(bsrLbl)
+        label.delete(bsrLbl)
+    if not na(plxLbl)
+        label.delete(plxLbl)
+    if not na(oilLbl)
+        label.delete(oilLbl)
+    if not na(avgLbl)
+        label.delete(avgLbl)
+
+    if showLabels
+        gasLbl := label.new(bar_index, gasSwitch, "GAS", xloc=xloc.bar_index, yloc=yloc.price, style=label.style_label_left, textcolor=color.white, color=colGAS, size=size.small)
+        pvdLbl := label.new(bar_index, pvdSwitch, "PVD", xloc=xloc.bar_index, yloc=yloc.price, style=label.style_label_left, textcolor=color.white, color=colPVD, size=size.small)
+        pvsLbl := label.new(bar_index, pvsSwitch, "PVS", xloc=xloc.bar_index, yloc=yloc.price, style=label.style_label_left, textcolor=color.white, color=colPVS, size=size.small)
+        bsrLbl := label.new(bar_index, bsrSwitch, "BSR", xloc=xloc.bar_index, yloc=yloc.price, style=label.style_label_left, textcolor=color.white, color=colBSR, size=size.small)
+        plxLbl := label.new(bar_index, plxSwitch, "PLX", xloc=xloc.bar_index, yloc=yloc.price, style=label.style_label_left, textcolor=color.white, color=colPLX, size=size.small)
+        oilLbl := label.new(bar_index, oilSwitch, "OIL", xloc=xloc.bar_index, yloc=yloc.price, style=label.style_label_left, textcolor=color.black, color=colOIL, size=size.small)
+        if showAvgLine
+            avgLbl := label.new(bar_index, avgSwitch, "AVG", xloc=xloc.bar_index, yloc=yloc.price, style=label.style_label_left, textcolor=color.black, color=colAVG, size=size.small)
+
+//==================== TABLE ====================
+var table t = table.new(f_pos(tablePosInput), 4, 16, border_width=1)
+
+if barstate.islast and showTable
+    table.cell(t, 0, 0, "Hang muc", text_color=color.white, bgcolor=f_bg_header())
+    table.cell(t, 1, 0, "Thay doi tu moc", text_color=color.white, bgcolor=f_bg_header())
+    table.cell(t, 2, 0, "Giu XAU va khong mua co", text_color=color.white, bgcolor=f_bg_header())
+    table.cell(t, 3, 0, "Rank", text_color=color.white, bgcolor=f_bg_header())
+
+    table.cell(t, 0, 1, "XAU", text_color=color.white, bgcolor=f_bg_bench())
+    table.cell(t, 1, 1, f_fmt_pct(xauRet), text_color=color.white, bgcolor=f_bg(xauRet))
+    table.cell(t, 2, 1, "Moc so sanh", text_color=color.white, bgcolor=f_bg_bench())
+    table.cell(t, 3, 1, "-", text_color=color.white, bgcolor=f_bg_bench())
+
+    table.cell(t, 0, 2, "WTI", text_color=color.white, bgcolor=f_bg_bench())
+    table.cell(t, 1, 2, f_fmt_pct(wtiRet), text_color=color.white, bgcolor=f_bg(wtiRet))
+    table.cell(t, 2, 2, "-", text_color=color.white, bgcolor=f_bg_bench())
+    table.cell(t, 3, 2, "-", text_color=color.white, bgcolor=f_bg_bench())
+
+    table.cell(t, 0, 3, "Brent", text_color=color.white, bgcolor=f_bg_bench())
+    table.cell(t, 1, 3, f_fmt_pct(brentRet), text_color=color.white, bgcolor=f_bg(brentRet))
+    table.cell(t, 2, 3, "-", text_color=color.white, bgcolor=f_bg_bench())
+    table.cell(t, 3, 3, "-", text_color=color.white, bgcolor=f_bg_bench())
+
+    table.cell(t, 0, 4, "PVN Core Avg", text_color=color.white, bgcolor=f_bg_group())
+    table.cell(t, 1, 4, f_fmt_pct(pvnCoreAvgRet), text_color=color.white, bgcolor=f_bg(pvnCoreAvgRet))
+    table.cell(t, 2, 4, f_fmt_pct(pvnCoreKeepXAU), text_color=color.white, bgcolor=f_bg(pvnCoreKeepXAU))
+    table.cell(t, 3, 4, "-", text_color=color.white, bgcolor=f_bg_group())
+
+    table.cell(t, 0, 5, "Downstream Avg", text_color=color.white, bgcolor=f_bg_group())
+    table.cell(t, 1, 5, f_fmt_pct(downstreamAvgRet), text_color=color.white, bgcolor=f_bg(downstreamAvgRet))
+    table.cell(t, 2, 5, f_fmt_pct(downstreamKeepXAU), text_color=color.white, bgcolor=f_bg(downstreamKeepXAU))
+    table.cell(t, 3, 5, "-", text_color=color.white, bgcolor=f_bg_group())
+
+    table.cell(t, 0, 6, "Group Avg", text_color=color.white, bgcolor=f_bg_group())
+    table.cell(t, 1, 6, f_fmt_pct(groupAvgRet), text_color=color.white, bgcolor=f_bg(groupAvgRet))
+    table.cell(t, 2, 6, f_fmt_pct(groupKeepXAU), text_color=color.white, bgcolor=f_bg(groupKeepXAU))
+    table.cell(t, 3, 6, "-", text_color=color.white, bgcolor=f_bg_group())
+
+    table.cell(t, 0, 7, "GAS", text_color=color.white)
+    table.cell(t, 1, 7, f_fmt_pct(gasRet), text_color=color.white, bgcolor=f_bg(gasRet))
+    table.cell(t, 2, 7, f_fmt_pct(gasKeepXAU), text_color=color.white, bgcolor=f_bg(gasKeepXAU))
+    table.cell(t, 3, 7, f_rank_txt(gasRank), text_color=color.white, bgcolor=f_bg_header())
+
+    table.cell(t, 0, 8, "PVD", text_color=color.white)
+    table.cell(t, 1, 8, f_fmt_pct(pvdRet), text_color=color.white, bgcolor=f_bg(pvdRet))
+    table.cell(t, 2, 8, f_fmt_pct(pvdKeepXAU), text_color=color.white, bgcolor=f_bg(pvdKeepXAU))
+    table.cell(t, 3, 8, f_rank_txt(pvdRank), text_color=color.white, bgcolor=f_bg_header())
+
+    table.cell(t, 0, 9, "PVS", text_color=color.white)
+    table.cell(t, 1, 9, f_fmt_pct(pvsRet), text_color=color.white, bgcolor=f_bg(pvsRet))
+    table.cell(t, 2, 9, f_fmt_pct(pvsKeepXAU), text_color=color.white, bgcolor=f_bg(pvsKeepXAU))
+    table.cell(t, 3, 9, f_rank_txt(pvsRank), text_color=color.white, bgcolor=f_bg_header())
+
+    table.cell(t, 0, 10, "BSR", text_color=color.white)
+    table.cell(t, 1, 10, f_fmt_pct(bsrRet), text_color=color.white, bgcolor=f_bg(bsrRet))
+    table.cell(t, 2, 10, f_fmt_pct(bsrKeepXAU), text_color=color.white, bgcolor=f_bg(bsrKeepXAU))
+    table.cell(t, 3, 10, f_rank_txt(bsrRank), text_color=color.white, bgcolor=f_bg_header())
+
+    table.cell(t, 0, 11, "PLX", text_color=color.white)
+    table.cell(t, 1, 11, f_fmt_pct(plxRet), text_color=color.white, bgcolor=f_bg(plxRet))
+    table.cell(t, 2, 11, f_fmt_pct(plxKeepXAU), text_color=color.white, bgcolor=f_bg(plxKeepXAU))
+    table.cell(t, 3, 11, f_rank_txt(plxRank), text_color=color.white, bgcolor=f_bg_header())
+
+    table.cell(t, 0, 12, "OIL", text_color=color.white)
+    table.cell(t, 1, 12, f_fmt_pct(oilRet), text_color=color.white, bgcolor=f_bg(oilRet))
+    table.cell(t, 2, 12, f_fmt_pct(oilKeepXAU), text_color=color.white, bgcolor=f_bg(oilKeepXAU))
+    table.cell(t, 3, 12, f_rank_txt(oilRank), text_color=color.white, bgcolor=f_bg_header())
+
+    table.cell(t, 0, 13, "Best performer", text_color=color.white, bgcolor=f_bg_group())
+    table.cell(t, 1, 13, na(bestRet) ? "-" : bestName + " | " + f_fmt_pct(bestRet), text_color=color.white, bgcolor=f_bg(bestRet))
+    table.cell(t, 2, 13, "-", text_color=color.white, bgcolor=f_bg_group())
+    table.cell(t, 3, 13, na(bestRet) ? "-" : "1", text_color=color.white, bgcolor=f_bg_group())
+
+    table.cell(t, 0, 14, "Worst performer", text_color=color.white, bgcolor=f_bg_group())
+    table.cell(t, 1, 14, na(worstRet) ? "-" : worstName + " | " + f_fmt_pct(worstRet), text_color=color.white, bgcolor=f_bg(worstRet))
+    table.cell(t, 2, 14, "-", text_color=color.white, bgcolor=f_bg_group())
+    table.cell(t, 3, 14, na(worstRet) ? "-" : "6", text_color=color.white, bgcolor=f_bg_group())
+
+    table.cell(t, 0, 15, "Anchor", text_color=color.white, bgcolor=f_bg_header())
+    table.cell(t, 1, 15, str.format_time(startTime, "dd/MM/yyyy"), text_color=color.white, bgcolor=f_bg_header())
+    table.cell(t, 2, 15, "Realtime dashboard", text_color=color.white, bgcolor=f_bg_header())
+    table.cell(t, 3, 15, "-", text_color=color.white, bgcolor=f_bg_header())
